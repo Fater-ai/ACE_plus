@@ -1,0 +1,26 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+diffusers
+transformers
+accelerate
+protobuf
+opencv-python
+safetensors
+pillow
+einops
+torch==2.4.0
+tqdm
+sentencepiece
+peft
+huggingface-hub
+xformers>=0.0.27.post2
+scepter
+ms_swift
+modelscope[framework]
+torchvision
+torchsde
+transformers-stream-generator
+open-clip-torch
+imagehash
+tiktoken
+oss2>=2.15.0
+flash_attn
