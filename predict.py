@@ -5,6 +5,15 @@ import importlib
 import io
 import os
 import sys
+import subprocess
+import shlex
+
+
+
+subprocess.run(shlex.split('pip install scepter --no-deps'))
+subprocess.run(shlex.split('pip install numpy==1.26'))
+subprocess.run(shlex.split('pip install flash-attn --no-build-isolation'),
+               env=os.environ | {'FLASH_ATTENTION_SKIP_CUDA_BUILD': "TRUE"})
 
 from PIL import Image
 from scepter.modules.transform.io import pillow_convert
@@ -23,9 +32,6 @@ from cog import Input, Path, BasePredictor
 from typing import List
 
 from inference.registry import INFERENCES
-from inference.utils import edit_preprocess
-
-
 
 fs_list = [ # keep this as class variable if needed across predictions, otherwise move to setup
     Config(cfg_dict={"NAME": "HuggingfaceFs", "TEMP_DIR": "./cache"}, load=False), # Using ./cache for temp dir
@@ -37,13 +43,17 @@ fs_list = [ # keep this as class variable if needed across predictions, otherwis
 for one_fs in fs_list:
     FS.init_fs_client(one_fs)
 
+
 os.environ["FLUX_FILL_PATH"] = "hf://black-forest-labs/FLUX.1-Fill-dev"
-os.environ["PORTRAIT_MODEL_PATH"] = "hf://ali-vilab/ACE_Plus@portrait/comfyui_portrait_lora64.safetensors"
-os.environ["SUBJECT_MODEL_PATH"] = "hf://ali-vilab/ACE_Plus@subject/comfyui_subject_lora16.safetensors"
-os.environ["LOCAL_MODEL_PATH"] = "hf://ali-vilab/ACE_Plus@local_editing/comfyui_local_lora16.safetensors"
+# os.environ["PORTRAIT_MODEL_PATH"] = "hf://ali-vilab/ACE_Plus@portrait/comfyui_portrait_lora64.safetensors"
+# os.environ["SUBJECT_MODEL_PATH"] = "hf://ali-vilab/ACE_Plus@subject/comfyui_subject_lora16.safetensors"
+# os.environ["LOCAL_MODEL_PATH"] = "hf://ali-vilab/ACE_Plus@local_editing/comfyui_local_lora16.safetensors"
 os.environ["ACE_PLUS_FFT_MODEL"] = "hf://ali-vilab/ACE_Plus@ace_plus_fft.safetensors"
 
 os.environ["FLUX_FILL_PATH"]=FS.get_dir_to_local_dir(os.environ["FLUX_FILL_PATH"])
+# os.environ["PORTRAIT_MODEL_PATH"]=FS.get_from(os.environ["PORTRAIT_MODEL_PATH"])
+# os.environ["SUBJECT_MODEL_PATH"]=FS.get_from(os.environ["SUBJECT_MODEL_PATH"])
+# os.environ["LOCAL_MODEL_PATH"]=FS.get_from(os.environ["LOCAL_MODEL_PATH"])
 os.environ["ACE_PLUS_FFT_MODEL"]=FS.get_from(os.environ["ACE_PLUS_FFT_MODEL"])
 
 class Predictor(BasePredictor):
@@ -74,25 +84,31 @@ class Predictor(BasePredictor):
         pipe_cfg = self.model_choices[self.default_model_name]
         self.pipe = INFERENCES.build(pipe_cfg)
 
+        # self.lora_path = {
+        #     "fft" : os.environ["ACE_PLUS_FFT_MODEL"],
+        #     "portrait" : os.environ["PORTRAIT_MODEL_PATH"],
+        #     "subject" : os.environ["SUBJECT_MODEL_PATH"],
+        #     "edit" : os.environ["LOCAL_MODEL_PATH"],
+        # }
+
     def predict(
         self,
         instruction: str = Input(description="The instruction for editing or generating!", default=""),
-        edit_type: str = Input(description="The type of editing to perform.", default='repainting', choices=['repainting', 'contour_repainting', 'depth_repainting', 'recolorizing', 'no_preprocess']),
-        output_h: int = Input(description="The height of output image", default=1024),
-        output_w: int = Input(description="The width of output image", default=1024),
-        input_reference_image: Path = Input(description="The input reference image (optional)", default=None),
+        lora: str = Input(description="The task/lora type", default='fft', choices=['fft', 'portrait', 'subject', 'edit']),
+        output_w: int = Input(description="The width of output image", default=1440),
+        output_h: int = Input(description="The height of output image", default=1440),
         input_image: Path = Input(description="The input image (optional)", default=None),
         input_mask: Path = Input(description="The input mask (optional)", default=None),
+        input_reference_image: Path = Input(description="The input reference image (optional)", default=None),
         seed: int = Input(description="The seed for generation (default: -1 for random)", default=-1),
-        sample_steps: int = Input(description="The sample step for generation (optional, default: 28)", default=28),
+        sample_steps: int = Input(description="The sample step for generation (optional, default: 50)", default=50),
         guide_scale: float = Input(description="The guide scale for generation (optional, default: 50)", default=50),
-        repainting_scale: float = Input(description="The repainting scale for content filling generation (optional, default: 1.0)", default=1.0),
+        repainting_scale: float = Input(description="The repainting scale for content filling generation (optional, default: 0.0)", default=0.0),
         use_change: bool = Input(description="Use change (optional, default: True)", default=True),
         keep_pixels: bool = Input(description="Keep pixels (optional, default: True)", default=True),
         keep_pixels_rate: float = Input(description="Keep pixels rate (optional, default: 0.8)", default=0.8),
 
     ) -> List[Path]:
-        edit_info = self.edit_type_dict[edit_type]
         pre_edit_image = None
         pre_edit_mask = None
         pre_ref_image = None
@@ -103,8 +119,6 @@ class Predictor(BasePredictor):
             pre_edit_mask = Image.open(str(input_mask)).convert("L") # Open Path as string and convert to L
         if input_reference_image:
             pre_ref_image = Image.open(str(input_reference_image)).convert("RGB") # Open Path as string and convert to RGB
-
-        pre_edit_image = edit_preprocess(edit_info.ANNOTATOR, we.device_id, pre_edit_image, pre_edit_mask)
 
         image, _, _, _, used_seed = self.pipe( # Use class-level Predictor.pipe
             reference_image=pre_ref_image,
